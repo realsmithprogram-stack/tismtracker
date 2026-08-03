@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>TismTracker</title>
+<meta name="theme-color" content="#FF8F66">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TismTracker">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- Firebase setup gate -->
+  <div id="setupScreen" class="screen hidden">
+    <div class="setup-card">
+      <div class="setup-emoji">🔧</div>
+      <h1>One-time setup</h1>
+      <p class="muted">Paste your Firebase config below. This is only needed once per phone — it connects TismTracker to your private sync database.</p>
+      <textarea id="firebaseConfigInput" rows="8" placeholder='{"apiKey": "...", "projectId": "...", ...}'></textarea>
+      <button class="btn btn-primary" id="saveConfigBtn">Save &amp; continue</button>
+      <p class="muted small">Don't have this yet? See the README that came with this app for a 5-minute Firebase setup guide.</p>
+    </div>
+  </div>
+
+  <!-- Sign in (email/password — restricts access to just your two accounts) -->
+  <div id="loginScreen" class="screen hidden">
+    <div class="setup-card">
+      <div class="setup-emoji">🔒</div>
+      <h1>Sign in</h1>
+      <p class="muted">Use the account created for this phone.</p>
+      <label class="field-label">Email</label>
+      <input type="email" id="loginEmail" class="field-input" autocomplete="username" autocapitalize="off">
+      <label class="field-label">Password</label>
+      <input type="password" id="loginPassword" class="field-input" autocomplete="current-password">
+      <p id="loginError" class="error-text hidden"></p>
+      <button class="btn btn-primary" id="loginBtn" style="margin-top:16px;">Sign in</button>
+    </div>
+  </div>
+
+  <!-- Profile picker -->
+  <div id="profileScreen" class="screen hidden">
+    <div class="profile-wrap">
+      <h1 class="title-xl">Who are you?</h1>
+      <button class="profile-btn" data-profile="babylon">
+        <span class="profile-emoji">🧑</span>
+        <span>Babylon</span>
+      </button>
+      <button class="profile-btn" data-profile="stink">
+        <span class="profile-emoji">❤️</span>
+        <span>Stink</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Babylon: main app -->
+  <div id="mainScreen" class="screen hidden">
+    <header class="topbar">
+      <div class="sync-dot" id="syncDot" title="Sync status"></div>
+      <div class="topbar-title" id="topbarTitle">Today</div>
+      <div class="topbar-spacer"></div>
+    </header>
+
+    <main id="viewToday" class="view">
+      <!-- populated by app.js -->
+    </main>
+
+    <main id="viewSchedule" class="view hidden">
+      <h2 class="section-title">Schedule</h2>
+      <div id="scheduleList" class="list"></div>
+    </main>
+
+    <main id="viewSleep" class="view hidden">
+      <h2 class="section-title">Sleep</h2>
+      <div class="card" id="sleepCard">
+        <div class="sleep-emoji">😴</div>
+        <p class="muted">TismTracker Web can't read Apple Health, so log sleep manually.</p>
+        <label class="field-label">Bedtime</label>
+        <input type="time" id="bedtimeInput" class="field-input">
+        <label class="field-label">Wake time</label>
+        <input type="time" id="waketimeInput" class="field-input">
+        <button class="btn btn-primary" id="saveSleepBtn">Save last night</button>
+      </div>
+      <div id="sleepHistory" class="list"></div>
+    </main>
+
+    <main id="viewCarer" class="view hidden">
+      <h2 class="section-title">Carer</h2>
+      <div id="messagesFeed" class="list"></div>
+    </main>
+
+    <main id="viewSettings" class="view hidden">
+      <h2 class="section-title">Settings</h2>
+      <div class="card">
+        <div class="settings-row">
+          <span>iCloud-free sync</span>
+          <span id="settingsSyncStatus" class="muted"></span>
+        </div>
+      </div>
+      <div class="card">
+        <label class="field-label">Schedule (JSON)</label>
+        <textarea id="scheduleJsonEditor" rows="14"></textarea>
+        <p id="scheduleJsonError" class="error-text hidden"></p>
+        <button class="btn btn-primary" id="saveScheduleBtn">Save schedule</button>
+      </div>
+      <div class="card">
+        <button class="btn" id="notifPermBtn">Enable notifications</button>
+      </div>
+      <div class="card">
+        <button class="btn" id="switchProfileBtn">Switch profile</button>
+      </div>
+      <div class="card">
+        <button class="btn btn-danger" id="resetDayBtn">Reset today</button>
+      </div>
+    </main>
+
+    <nav class="tabbar">
+      <button class="tab-btn active" data-view="Today">
+        <span class="tab-icon">🏠</span><span>Today</span>
+      </button>
+      <button class="tab-btn" data-view="Schedule">
+        <span class="tab-icon">📅</span><span>Schedule</span>
+      </button>
+      <button class="tab-btn" data-view="Sleep">
+        <span class="tab-icon">😴</span><span>Sleep</span>
+      </button>
+      <button class="tab-btn" data-view="Carer">
+        <span class="tab-icon">❤️</span><span>Carer</span>
+      </button>
+      <button class="tab-btn" data-view="Settings">
+        <span class="tab-icon">⚙️</span><span>Settings</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Stink: carer app -->
+  <div id="carerScreen" class="screen hidden">
+    <header class="topbar topbar-pink">
+      <div class="sync-dot" id="carerSyncDot"></div>
+      <div class="topbar-title">Carer</div>
+      <button class="link-btn" id="carerSwitchProfileBtn">Switch</button>
+    </header>
+
+    <main id="viewCarerDashboard" class="view">
+      <div class="card center-card">
+        <div class="carer-heart">❤️ Babylon</div>
+        <div class="progress-track"><div class="progress-fill" id="carerProgressFill"></div></div>
+        <div class="stat-row">
+          <div class="stat-pill"><span id="carerCompleted">0</span><small>Completed</small></div>
+          <div class="stat-pill"><span id="carerMissed">0</span><small>Missed</small></div>
+        </div>
+        <div id="carerBadDayNote" class="badday-note hidden">Low energy mode is active today</div>
+        <div class="mood-row">Mood: <span id="carerMoodToday">Not logged yet</span></div>
+      </div>
+
+      <div class="card">
+        <label class="field-label">Write encouragement</label>
+        <textarea id="encourageInput" rows="3" placeholder="You're doing amazing today ❤️"></textarea>
+        <button class="btn btn-pink" id="sendEncourageBtn">SEND</button>
+      </div>
+
+      <h2 class="section-title">History</h2>
+      <div id="carerMoodHistory" class="list"></div>
+    </main>
+
+    <nav class="tabbar tabbar-pink">
+      <button class="tab-btn active" data-cview="Dashboard">
+        <span class="tab-icon">❤️</span><span>Dashboard</span>
+      </button>
+      <button class="tab-btn" data-cview="Settings">
+        <span class="tab-icon">⚙️</span><span>Settings</span>
+      </button>
+    </nav>
+
+    <main id="viewCarerSettings" class="view hidden">
+      <h2 class="section-title">Settings</h2>
+      <div class="card">
+        <button class="btn" id="carerNotifPermBtn">Enable notifications</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- Reusable task detail sheet -->
+  <div id="taskSheet" class="sheet hidden">
+    <div class="sheet-backdrop" id="sheetBackdrop"></div>
+    <div class="sheet-content">
+      <div class="sheet-emoji" id="sheetEmoji">🚿</div>
+      <div class="sheet-title" id="sheetTitle">Shower</div>
+      <div id="sheetSubtasks" class="subtask-list"></div>
+      <button class="btn btn-primary hidden" id="sheetMarkDoneBtn">Mark done</button>
+      <button class="link-btn" id="sheetCloseBtn">Close</button>
+    </div>
+  </div>
+
+  <!-- End day sheet -->
+  <div id="endDaySheet" class="sheet hidden">
+    <div class="sheet-backdrop"></div>
+    <div class="sheet-content">
+      <div id="endDayReview">
+        <div class="sheet-title">End Day</div>
+        <p class="muted">A few tasks are still open. That's okay — just mark what happened.</p>
+        <div id="endDayList" class="list"></div>
+        <button class="btn btn-indigo" id="confirmEndDayBtn">🌙 End Day</button>
+        <button class="link-btn" id="cancelEndDayBtn">Not yet</button>
+      </div>
+      <div id="endDaySendoff" class="sendoff hidden">
+        <div class="sendoff-emoji">🌙</div>
+        <div class="sendoff-title">Sleep well, Babylon ❤️</div>
+        <div class="sendoff-sub">See you tomorrow.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mood prompt -->
+  <div id="moodSheet" class="sheet hidden">
+    <div class="sheet-backdrop"></div>
+    <div class="sheet-content">
+      <div class="sheet-title" id="moodPromptTitle">How are you feeling this morning?</div>
+      <div class="mood-options" id="moodOptions"></div>
+      <button class="link-btn" id="moodSkipBtn">Skip for now</button>
+    </div>
+  </div>
+
+  <!-- Celebration overlay -->
+  <div id="celebration" class="celebration hidden">
+    <div class="celebration-emoji">🎉</div>
+    <div class="celebration-text">Great job Babylon!</div>
+  </div>
+
+  <!-- Bad day confirm -->
+  <div id="badDaySheet" class="sheet hidden">
+    <div class="sheet-backdrop"></div>
+    <div class="sheet-content">
+      <div class="sheet-title">Activate low energy mode?</div>
+      <p class="muted">This swaps today's routine for just the essentials.</p>
+      <button class="btn btn-danger" id="confirmBadDayBtn">Yes, I need this</button>
+      <button class="link-btn" id="cancelBadDayBtn">Not now</button>
+    </div>
+  </div>
+
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
