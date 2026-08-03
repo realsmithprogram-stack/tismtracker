@@ -1,4 +1,4 @@
-const CACHE_NAME = "tismtracker-v2";
+const CACHE_NAME = "tismtracker-v3";
 const SHELL_FILES = [
   "./",
   "./index.html",

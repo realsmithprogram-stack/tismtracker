@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getFirestore, doc, setDoc, getDoc, onSnapshot,
+  getFirestore, doc, setDoc, updateDoc, getDoc, onSnapshot,
   collection, addDoc, query, orderBy, Timestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
@@ -10,10 +10,10 @@ import {
 
 // ---------- Default schedule (used the very first time, before Settings edits) ----------
 const DEFAULT_SCHEDULE = [
-  { id: "wake-up", time: "09:00", title: "Wake up", icon: "☀️", subtasks: [] },
-  { id: "shower", time: "09:15", title: "Shower", icon: "🚿", subtasks: ["Get towel", "Turn shower on", "Shower", "Dry off", "Get dressed"] },
-  { id: "breakfast", time: "10:00", title: "Eat breakfast", icon: "🍽", subtasks: ["Choose food", "Eat", "Drink water"] },
-  { id: "brush-teeth", time: "10:30", title: "Brush teeth", icon: "🪥", subtasks: [] }
+  { id: "wake-up", time: "09:00", title: "Wake up", icon: "☀️", subtasks: [], recurring: true, dateKey: null },
+  { id: "shower", time: "09:15", title: "Shower", icon: "🚿", subtasks: ["Get towel", "Turn shower on", "Shower", "Dry off", "Get dressed"], recurring: true, dateKey: null },
+  { id: "breakfast", time: "10:00", title: "Eat breakfast", icon: "🍽", subtasks: ["Choose food", "Eat", "Drink water"], recurring: true, dateKey: null },
+  { id: "brush-teeth", time: "10:30", title: "Brush teeth", icon: "🪥", subtasks: [], recurring: true, dateKey: null }
 ];
 
 const BAD_DAY_ESSENTIALS = [
@@ -34,6 +34,123 @@ const MOODS = [
   { id: "bad", emoji: "😭", label: "Bad" }
 ];
 
+const SUGGESTION_PRESETS = [
+  "Add a water break?",
+  "Add a short rest?",
+  "Add a stretch break?",
+  "Add a snack break?"
+];
+
+// ---------- Continuous day/night color-phase engine ----------
+// Anchor stops through a 24h clock; colors are linearly interpolated
+// between the two nearest stops so the whole app drifts smoothly
+// rather than snapping between fixed "modes".
+const PHASE_STOPS = [
+  { h: 0,    bgTop: "#14112A", bgMid: "#1E1A3D", bgBottom: "#241F42", text: "#C9BEDD", muted: "#8D82A8",
+    card: "rgba(42,36,70,0.55)", shadow: "rgba(8,6,18,0.5)", accentA: "#9B8AD9", accentB: "#6C63A6",
+    pinkA: "#9B8AD9", pinkB: "#6C63A6", topbar: "rgba(28,24,52,0.8)", topbarPink: "rgba(28,24,52,0.8)",
+    message: "rgba(58,48,84,0.55)", star: 1 },
+  { h: 5,    bgTop: "#2A2145", bgMid: "#6B4B5E", bgBottom: "#F0A98B", text: "#5A3B52", muted: "#9B7A92",
+    card: "rgba(255,255,255,0.5)", shadow: "rgba(120,70,80,0.18)", accentA: "#FF9A76", accentB: "#E97AA0",
+    pinkA: "#FF9AC0", pinkB: "#E97AA0", topbar: "rgba(255,225,210,0.8)", topbarPink: "rgba(255,225,225,0.8)",
+    message: "rgba(255,230,235,0.6)", star: 0.6 },
+  { h: 6.5,  bgTop: "#FFDCC2", bgMid: "#FFB6A8", bgBottom: "#F6A0B8", text: "#5A3B4A", muted: "#9B7A88",
+    card: "rgba(255,255,255,0.68)", shadow: "rgba(120,70,80,0.14)", accentA: "#FF9A76", accentB: "#F4708C",
+    pinkA: "#FF9AC0", pinkB: "#F4708C", topbar: "rgba(255,225,210,0.85)", topbarPink: "rgba(255,225,235,0.85)",
+    message: "#FDEAF0", star: 0.1 },
+  { h: 8,    bgTop: "#FFF6EC", bgMid: "#FFEBD8", bgBottom: "#FFE1C6", text: "#4A3B52", muted: "#8A7A92",
+    card: "rgba(255,255,255,0.72)", shadow: "rgba(74,59,82,0.10)", accentA: "#FF8F66", accentB: "#E06B44",
+    pinkA: "#F2789F", pinkB: "#E0628C", topbar: "rgba(255,246,236,0.85)", topbarPink: "rgba(255,240,246,0.85)",
+    message: "#FDEEF3", star: 0 },
+  { h: 17,   bgTop: "#FFF6EC", bgMid: "#FFEBD8", bgBottom: "#FFE1C6", text: "#4A3B52", muted: "#8A7A92",
+    card: "rgba(255,255,255,0.72)", shadow: "rgba(74,59,82,0.10)", accentA: "#FF8F66", accentB: "#E06B44",
+    pinkA: "#F2789F", pinkB: "#E0628C", topbar: "rgba(255,246,236,0.85)", topbarPink: "rgba(255,240,246,0.85)",
+    message: "#FDEEF3", star: 0 },
+  { h: 18.5, bgTop: "#FF9E6B", bgMid: "#E77B7E", bgBottom: "#6B4B7E", text: "#442840", muted: "#95728E",
+    card: "rgba(255,255,255,0.55)", shadow: "rgba(74,40,60,0.2)", accentA: "#F0806E", accentB: "#8C5E92",
+    pinkA: "#F0806E", pinkB: "#8C5E92", topbar: "rgba(255,200,180,0.75)", topbarPink: "rgba(255,200,210,0.75)",
+    message: "rgba(255,220,225,0.6)", star: 0.35 },
+  { h: 20,   bgTop: "#14112A", bgMid: "#1E1A3D", bgBottom: "#241F42", text: "#C9BEDD", muted: "#8D82A8",
+    card: "rgba(42,36,70,0.55)", shadow: "rgba(8,6,18,0.5)", accentA: "#9B8AD9", accentB: "#6C63A6",
+    pinkA: "#9B8AD9", pinkB: "#6C63A6", topbar: "rgba(28,24,52,0.8)", topbarPink: "rgba(28,24,52,0.8)",
+    message: "rgba(58,48,84,0.55)", star: 0.85 },
+  { h: 24,   bgTop: "#14112A", bgMid: "#1E1A3D", bgBottom: "#241F42", text: "#C9BEDD", muted: "#8D82A8",
+    card: "rgba(42,36,70,0.55)", shadow: "rgba(8,6,18,0.5)", accentA: "#9B8AD9", accentB: "#6C63A6",
+    pinkA: "#9B8AD9", pinkB: "#6C63A6", topbar: "rgba(28,24,52,0.8)", topbarPink: "rgba(28,24,52,0.8)",
+    message: "rgba(58,48,84,0.55)", star: 1 }
+];
+
+function parseColor(c) {
+  c = c.trim();
+  if (c[0] === "#") {
+    let hex = c.slice(1);
+    if (hex.length === 3) hex = hex.split("").map(ch => ch + ch).join("");
+    const n = parseInt(hex, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1];
+  }
+  const m = c.match(/rgba?\(([^)]+)\)/);
+  if (m) {
+    const parts = m[1].split(",").map(s => parseFloat(s));
+    return [parts[0], parts[1], parts[2], parts.length > 3 ? parts[3] : 1];
+  }
+  return [0, 0, 0, 1];
+}
+
+function lerpColor(c1, c2, t) {
+  const a = parseColor(c1), b = parseColor(c2);
+  const r = a.map((v, i) => v + (b[i] - v) * t);
+  return `rgba(${Math.round(r[0])}, ${Math.round(r[1])}, ${Math.round(r[2])}, ${r[3].toFixed(3)})`;
+}
+
+function getPhaseColors(d = new Date()) {
+  const hour = d.getHours() + d.getMinutes() / 60;
+  let prev = PHASE_STOPS[0], next = PHASE_STOPS[PHASE_STOPS.length - 1];
+  for (let i = 0; i < PHASE_STOPS.length - 1; i++) {
+    if (hour >= PHASE_STOPS[i].h && hour <= PHASE_STOPS[i + 1].h) {
+      prev = PHASE_STOPS[i]; next = PHASE_STOPS[i + 1]; break;
+    }
+  }
+  const span = next.h - prev.h;
+  const t = span === 0 ? 0 : (hour - prev.h) / span;
+  const keys = ["bgTop", "bgMid", "bgBottom", "text", "muted", "card", "shadow", "accentA", "accentB", "pinkA", "pinkB", "topbar", "topbarPink", "message"];
+  const out = {};
+  keys.forEach(k => out[k] = lerpColor(prev[k], next[k], t));
+  out.star = prev.star + (next.star - prev.star) * t;
+  out.isNight = hour >= 20 || hour < 5;
+  return out;
+}
+
+function applyPhaseColors() {
+  const p = getPhaseColors();
+  const root = document.documentElement.style;
+  root.setProperty("--bg-top", p.bgTop);
+  root.setProperty("--bg-mid", p.bgMid);
+  root.setProperty("--bg-bottom", p.bgBottom);
+  root.setProperty("--plum", p.text);
+  root.setProperty("--plum-soft", p.muted);
+  root.setProperty("--card-bg", p.card);
+  root.setProperty("--shadow", `0 8px 24px ${p.shadow}`);
+  root.setProperty("--accent-start", p.accentA);
+  root.setProperty("--accent-end", p.accentB);
+  root.setProperty("--pink-start", p.pinkA);
+  root.setProperty("--pink-end", p.pinkB);
+  root.setProperty("--topbar-bg", p.topbar);
+  root.setProperty("--topbar-bg-pink", p.topbarPink);
+  root.setProperty("--message-bg", p.message);
+  root.setProperty("--star-opacity", p.star.toFixed(2));
+  document.body.classList.toggle("is-night", p.isNight);
+}
+
+function isNightNow() {
+  const hour = new Date().getHours();
+  return hour >= 20 || hour < 5;
+}
+
+// ---------- Haptics ----------
+function haptic(pattern = 15) {
+  if (navigator.vibrate) { try { navigator.vibrate(pattern); } catch (e) { /* ignore */ } }
+}
+
 // ---------- State ----------
 const state = {
   profile: null,          // "babylon" | "stink"
@@ -42,10 +159,12 @@ const state = {
   dayStarted: false,
   badDayMode: false,
   taskStatuses: {},        // { [taskId]: { state, completedSubtasks: [], completedAt } }
+  snoozes: {},              // { [taskId]: timestampMs }
   streak: 0,
   streakCountedToday: false,
   moodEntries: [],
   encouragementMessages: [],
+  suggestions: [],
   sleepEntries: [],
   unreadMessages: 0,
   cloudStatus: "unknown"   // unknown | checking | available | unavailable
@@ -55,9 +174,13 @@ let db = null;
 let currentView = "Today";
 let currentCarerView = "Dashboard";
 let activeSheetTask = null;
+let editingTaskId = null;
 let firstDaySnapshot = true;
 let firstMsgSnapshot = true;
 let prevTaskStatuses = {};
+
+const VIEW_ORDER = ["Today", "Schedule", "Sleep", "Carer", "Settings"];
+const CARER_VIEW_ORDER = ["Dashboard", "Schedule", "Settings"];
 
 // ---------- Helpers ----------
 function todayKey(d = new Date()) {
@@ -69,7 +192,8 @@ function todayKey(d = new Date()) {
 
 function activeTasks() {
   if (state.badDayMode) return BAD_DAY_ESSENTIALS.map(t => ({ ...t, time: "", subtasks: [] }));
-  return state.schedule;
+  const today = todayKey();
+  return state.schedule.filter(t => t.recurring !== false || t.dateKey === today);
 }
 
 function completedCount() {
@@ -118,10 +242,12 @@ function saveLocalCache() {
     dayStarted: state.dayStarted,
     badDayMode: state.badDayMode,
     taskStatuses: state.taskStatuses,
+    snoozes: state.snoozes,
     streak: state.streak,
     streakCountedToday: state.streakCountedToday,
     moodEntries: state.moodEntries,
     encouragementMessages: state.encouragementMessages,
+    suggestions: state.suggestions,
     sleepEntries: state.sleepEntries,
     unreadMessages: state.unreadMessages
   }));
@@ -133,6 +259,8 @@ function loadLocalCache() {
   try {
     const saved = JSON.parse(raw);
     Object.assign(state, saved);
+    if (!state.snoozes) state.snoozes = {};
+    if (!state.suggestions) state.suggestions = [];
   } catch (e) { /* ignore corrupt cache */ }
 }
 
@@ -147,10 +275,20 @@ function checkForNewDay() {
     state.dayKey = key;
     state.dayStarted = false;
     state.taskStatuses = {};
+    state.snoozes = {};
     state.badDayMode = false;
     state.streakCountedToday = false;
     notifiedToday.clear();
     prevTaskStatuses = {};
+
+    // Purge stale one-off ("today only") tasks from previous days so
+    // the shared schedule doesn't accumulate old dentist appointments etc.
+    const cleaned = state.schedule.filter(t => t.recurring !== false || t.dateKey === key);
+    if (cleaned.length !== state.schedule.length) {
+      state.schedule = cleaned;
+      pushSchedule(cleaned);
+    }
+
     saveLocalCache();
     pushDayState();
   }
@@ -169,6 +307,7 @@ async function initFirebase() {
   const config = getSavedFirebaseConfig();
   if (!config) {
     showScreen("setupScreen");
+    hideLoadingScreen();
     return;
   }
   setSyncStatus("checking");
@@ -186,11 +325,13 @@ async function initFirebase() {
         setSyncStatus("unavailable");
         showScreen("loginScreen");
       }
+      hideLoadingScreen();
     });
   } catch (e) {
     console.error("Firebase init failed", e);
     setSyncStatus("unavailable");
     showScreen("loginScreen");
+    hideLoadingScreen();
   }
 }
 
@@ -243,7 +384,8 @@ function attachListeners() {
       state.schedule = snap.data().tasks;
       saveLocalCache();
       if (currentView === "Today") renderToday();
-      if (currentView === "Schedule") renderSchedule();
+      if (currentView === "Schedule") renderScheduleBuilder("scheduleList");
+      if (currentCarerView === "Schedule") renderScheduleBuilder("carerScheduleList");
     }
   });
 
@@ -270,6 +412,7 @@ function attachListeners() {
       state.dayStarted = !!d.dayStarted;
       state.badDayMode = !!d.badDayMode;
       state.taskStatuses = newStatuses;
+      state.snoozes = d.snoozes || {};
       state.streak = d.streak || 0;
       state.streakCountedToday = !!d.streakCountedToday;
       saveLocalCache();
@@ -303,7 +446,15 @@ function attachListeners() {
 
     saveLocalCache();
     updateCarerBadge();
+    if (currentView === "Today") renderToday();
     if (currentView === "Carer") { renderCarerMessages(); state.unreadMessages = 0; updateCarerBadge(); saveLocalCache(); }
+  });
+
+  // Suggestions (Stink's proposed tweaks)
+  onSnapshot(query(collection(db, "suggestions"), orderBy("createdAt", "asc")), (snap) => {
+    state.suggestions = snap.docs.map(d => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.() ?? new Date() }));
+    saveLocalCache();
+    if (currentView === "Today") renderToday();
   });
 
   // Sleep entries
@@ -325,6 +476,7 @@ async function pushDayState() {
     dayStarted: state.dayStarted,
     badDayMode: state.badDayMode,
     taskStatuses: state.taskStatuses,
+    snoozes: state.snoozes,
     streak: state.streak,
     streakCountedToday: state.streakCountedToday,
     schedule: state.badDayMode ? BAD_DAY_ESSENTIALS : state.schedule
@@ -343,6 +495,16 @@ async function pushMessage(text) {
   await addDoc(collection(db, "messages"), { text, date: Timestamp.fromDate(new Date()) });
 }
 
+async function pushSuggestion(text) {
+  if (!db) return;
+  await addDoc(collection(db, "suggestions"), { text, status: "pending", createdAt: Timestamp.fromDate(new Date()) });
+}
+
+async function updateSuggestionStatus(id, status) {
+  if (!db) return;
+  await updateDoc(doc(db, "suggestions", id), { status });
+}
+
 async function pushSleep(entry) {
   if (!db) return;
   await addDoc(collection(db, "sleep"), {
@@ -356,6 +518,13 @@ function showScreen(id) {
   ["setupScreen", "loginScreen", "profileScreen", "mainScreen", "carerScreen"].forEach(s => {
     document.getElementById(s).classList.toggle("hidden", s !== id);
   });
+}
+
+function hideLoadingScreen() {
+  const el = document.getElementById("loadingScreen");
+  if (!el || el.classList.contains("loading-hide")) return;
+  el.classList.add("loading-hide");
+  setTimeout(() => el.remove(), 550);
 }
 
 function pickProfile(profile) {
@@ -373,41 +542,93 @@ function pickProfile(profile) {
   }
 }
 
+// ---------- Smooth slide transitions between tabs ----------
+function animateViewSwap(oldEl, newEl, dir) {
+  if (!oldEl || oldEl === newEl) {
+    if (newEl) newEl.classList.remove("hidden");
+    return;
+  }
+  newEl.style.transition = "none";
+  newEl.style.transform = `translateX(${dir * 24}px)`;
+  newEl.style.opacity = "0";
+  newEl.classList.remove("hidden");
+  oldEl.style.transition = "transform 0.22s ease, opacity 0.22s ease";
+  oldEl.style.transform = `translateX(${-dir * 24}px)`;
+  oldEl.style.opacity = "0";
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      newEl.style.transition = "transform 0.22s ease, opacity 0.22s ease";
+      newEl.style.transform = "translateX(0)";
+      newEl.style.opacity = "1";
+    });
+  });
+  setTimeout(() => {
+    oldEl.classList.add("hidden");
+    oldEl.style.transition = "";
+    oldEl.style.transform = "";
+    oldEl.style.opacity = "";
+    newEl.style.transition = "";
+    newEl.style.transform = "";
+    newEl.style.opacity = "";
+  }, 260);
+}
+
 function switchView(view) {
+  if (view === currentView) return;
+  const oldIdx = VIEW_ORDER.indexOf(currentView);
+  const newIdx = VIEW_ORDER.indexOf(view);
+  const dir = newIdx > oldIdx ? 1 : -1;
+  const oldEl = document.getElementById("view" + currentView);
   currentView = view;
-  document.querySelectorAll("#mainScreen .view").forEach(v => v.classList.add("hidden"));
+
   document.querySelectorAll("#mainScreen .tab-btn").forEach(b => b.classList.toggle("active", b.dataset.view === view));
-  document.getElementById("topbarTitle").textContent = view;
-  document.getElementById("view" + view).classList.remove("hidden");
+  document.getElementById("topbarTitle").textContent = view === "Today" ? "Home" : view;
+
   if (view === "Today") renderToday();
-  if (view === "Schedule") renderSchedule();
+  if (view === "Schedule") renderScheduleBuilder("scheduleList");
   if (view === "Sleep") renderSleep();
   if (view === "Carer") { renderCarerMessages(); state.unreadMessages = 0; updateCarerBadge(); saveLocalCache(); }
   if (view === "Settings") renderSettings();
+
+  const newEl = document.getElementById("view" + view);
+  animateViewSwap(oldEl, newEl, dir);
 }
 
 function switchCarerView(view) {
+  if (view === currentCarerView) return;
+  const oldIdx = CARER_VIEW_ORDER.indexOf(currentCarerView);
+  const newIdx = CARER_VIEW_ORDER.indexOf(view);
+  const dir = newIdx > oldIdx ? 1 : -1;
+  const oldEl = document.getElementById("viewCarer" + currentCarerView);
   currentCarerView = view;
-  document.querySelectorAll("#carerScreen .view").forEach(v => v.classList.add("hidden"));
+
   document.querySelectorAll("#carerScreen .tab-btn").forEach(b => b.classList.toggle("active", b.dataset.cview === view));
-  document.getElementById("viewCarer" + view).classList.remove("hidden");
+  if (view === "Schedule") renderScheduleBuilder("carerScheduleList");
+
+  const newEl = document.getElementById("viewCarer" + view);
+  animateViewSwap(oldEl, newEl, dir);
 }
 
-// ---------- Rendering: Today ----------
+// ---------- Rendering: Today / Home ----------
 function renderToday() {
   const el = document.getElementById("viewToday");
+  const night = isNightNow();
+
   if (!state.dayStarted) {
     el.innerHTML = `
       <div class="card hero-card">
-        <div class="hero-emoji">☀️</div>
-        <div class="hero-title">Good morning, Babylon</div>
-        <div class="hero-sub">Ready for today?</div>
+        <div class="hero-emoji">${night ? "🌙" : "☀️"}</div>
+        <div class="hero-title">${night ? "Still up, Babylon?" : "Good morning, Babylon"}</div>
+        <div class="hero-sub">${night ? "Take it easy — rest is part of the routine too." : "Ready for today?"}</div>
         <button class="btn btn-primary" id="startDayBtn">START DAY</button>
       </div>
       <button class="badday-entry" id="badDayEntryBtn">🚨 I'm overwhelmed</button>
+      ${recentMessagePreviewHtml()}
+      ${suggestionCardsHtml()}
     `;
     document.getElementById("startDayBtn").onclick = startDay;
     document.getElementById("badDayEntryBtn").onclick = () => showSheet("badDaySheet");
+    wireSuggestionCards();
     return;
   }
 
@@ -423,6 +644,9 @@ function renderToday() {
       <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
     </div>
   `;
+
+  html += recentMessagePreviewHtml();
+  html += suggestionCardsHtml();
 
   if (state.badDayMode) {
     html += `
@@ -458,23 +682,85 @@ function renderToday() {
       showToast(`↩️ ${t.title} undone`);
     };
   });
+  wireSuggestionCards();
+}
+
+function recentMessagePreviewHtml() {
+  if (!state.encouragementMessages.length) return "";
+  const m = state.encouragementMessages[state.encouragementMessages.length - 1];
+  return `
+    <div class="message-card home-message-preview">
+      <div class="message-from">❤️ From Stink</div>
+      <div>${escapeHtml(m.text)}</div>
+    </div>
+  `;
+}
+
+function suggestionCardsHtml() {
+  const pending = state.suggestions.filter(s => s.status === "pending");
+  if (!pending.length) return "";
+  return `<div class="list" style="margin-bottom:16px;">` + pending.map(s => `
+    <div class="suggestion-card" data-sid="${s.id}">
+      <div class="suggestion-text">💡 Stink suggests: ${escapeHtml(s.text)}</div>
+      <div class="suggestion-actions">
+        <button class="btn-mini btn-mini-accept" data-act="accept" data-sid="${s.id}">Add it</button>
+        <button class="btn-mini btn-mini-dismiss" data-act="dismiss" data-sid="${s.id}">Not now</button>
+      </div>
+    </div>
+  `).join("") + `</div>`;
+}
+
+function wireSuggestionCards() {
+  document.querySelectorAll(".suggestion-card [data-act]").forEach(btn => {
+    btn.onclick = () => {
+      const sid = btn.dataset.sid;
+      const suggestion = state.suggestions.find(s => s.id === sid);
+      if (!suggestion) return;
+      if (btn.dataset.act === "accept") {
+        const title = suggestion.text.replace(/\?\s*$/, "").replace(/^Add\s+/i, "");
+        const newTask = {
+          id: "sug-" + sid,
+          time: "",
+          title: title.charAt(0).toUpperCase() + title.slice(1),
+          icon: "💡",
+          subtasks: [],
+          recurring: false,
+          dateKey: todayKey()
+        };
+        state.schedule.push(newTask);
+        saveLocalCache();
+        pushSchedule(state.schedule);
+        showToast("✅ Added to today's schedule");
+      } else {
+        showToast("Okay, maybe another time");
+      }
+      suggestion.status = btn.dataset.act === "accept" ? "accepted" : "dismissed";
+      updateSuggestionStatus(sid, suggestion.status);
+      saveLocalCache();
+      renderToday();
+    };
+  });
 }
 
 function taskRowHtml(task) {
   const status = state.taskStatuses[task.id]?.state || "pending";
+  const snoozedUntil = state.snoozes?.[task.id];
+  const isSnoozed = snoozedUntil && Date.now() < snoozedUntil && status === "pending";
   const classes = ["task-row"];
   if (status === "missed") classes.push("missed");
+  if (isSnoozed) classes.push("snoozed");
   if (status === "completed" || status === "completedLate") classes.push("completed");
   const icon = status === "completed" || status === "completedLate" ? "✅"
     : status === "missed" ? "❗️"
-    : status === "skipped" ? "↪️" : "›";
+    : status === "skipped" ? "↪️"
+    : isSnoozed ? "⏰" : "›";
   const canUndo = status !== "pending";
   return `
     <div class="${classes.join(" ")}" role="group">
       <button class="task-row-main" id="task-${task.id}">
         ${task.time ? `<span class="task-time">${task.time}</span>` : ""}
         <span class="task-icon">${task.icon}</span>
-        <span class="task-title">${task.title}${status === "missed" ? `<span class="task-missed-label">Missed</span>` : ""}</span>
+        <span class="task-title">${task.title}${status === "missed" ? `<span class="task-missed-label">Missed</span>` : ""}${isSnoozed ? `<span class="task-snoozed-label">Snoozed until ${new Date(snoozedUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>` : ""}</span>
         <span class="task-status-icon">${icon}</span>
       </button>
       ${canUndo ? `<button class="task-undo-btn" id="undo-${task.id}" title="Undo">↩️</button>` : ""}
@@ -514,6 +800,7 @@ function openTaskSheet(task) {
   const subtasksEl = document.getElementById("sheetSubtasks");
   const doneBtn = document.getElementById("sheetMarkDoneBtn");
   const undoBtn = document.getElementById("sheetUndoBtn");
+  const snoozeBtn = document.getElementById("sheetSnoozeBtn");
 
   undoBtn.classList.toggle("hidden", status.state === "pending");
   undoBtn.onclick = () => {
@@ -524,6 +811,9 @@ function openTaskSheet(task) {
     showToast(`↩️ ${task.title} undone`);
   };
 
+  snoozeBtn.classList.toggle("hidden", status.state !== "pending");
+  snoozeBtn.onclick = () => snoozeTask(task);
+
   if (!task.subtasks || task.subtasks.length === 0) {
     subtasksEl.innerHTML = "";
     doneBtn.classList.remove("hidden");
@@ -532,6 +822,7 @@ function openTaskSheet(task) {
       saveLocalCache(); pushDayState();
       closeSheet("taskSheet");
       renderToday();
+      haptic();
       showCelebration();
     };
   } else {
@@ -548,14 +839,25 @@ function openTaskSheet(task) {
         toggleSubtaskInternal(task, st);
         saveLocalCache(); pushDayState();
         const nowDone = state.taskStatuses[task.id]?.state === "completed";
+        haptic(10);
         openTaskSheet(task); // re-render sheet
         if (nowDone) {
+          haptic();
           setTimeout(() => { closeSheet("taskSheet"); renderToday(); showCelebration(); }, 200);
         }
       };
     });
   }
   showSheet("taskSheet");
+}
+
+function snoozeTask(task) {
+  state.snoozes = state.snoozes || {};
+  state.snoozes[task.id] = Date.now() + 15 * 60 * 1000;
+  saveLocalCache(); pushDayState();
+  closeSheet("taskSheet");
+  renderToday();
+  showToast(`⏰ We'll remind you about ${task.title} in 15 min`);
 }
 
 function completeTaskInternal(task) {
@@ -566,6 +868,7 @@ function completeTaskInternal(task) {
     completedSubtasks: task.subtasks || [],
     completedAt: new Date().toISOString()
   };
+  if (state.snoozes) delete state.snoozes[task.id];
   recalcStreak();
 }
 
@@ -577,6 +880,7 @@ function toggleSubtaskInternal(task, subtask) {
   if (task.subtasks.length && status.completedSubtasks.length === task.subtasks.length) {
     status.state = "completed";
     status.completedAt = new Date().toISOString();
+    if (state.snoozes) delete state.snoozes[task.id];
   } else if (status.state === "completed") {
     status.state = "pending";
   }
@@ -682,16 +986,97 @@ function maybeShowMoodPrompt() {
   showSheet("moodSheet");
 }
 
-// ---------- Schedule view ----------
-function renderSchedule() {
-  const el = document.getElementById("scheduleList");
-  el.innerHTML = state.schedule.map(t => `
-    <div class="task-row-static">
-      <span class="task-time">${t.time}</span>
-      <span class="task-icon">${t.icon}</span>
-      <span class="task-title">${t.title}${t.subtasks.length ? `<br><small class="muted">${t.subtasks.length} steps</small>` : ""}</span>
+// ---------- Schedule view (visual builder — shared by Babylon & Stink) ----------
+function renderScheduleBuilder(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const sorted = state.schedule.slice().sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99"));
+  el.innerHTML = sorted.map(t => `
+    <div class="task-row-static schedule-edit-row">
+      ${t.time ? `<span class="task-time">${t.time}</span>` : `<span class="task-time">—</span>`}
+      <span class="task-icon">${t.icon || "📌"}</span>
+      <span class="task-title">${escapeHtml(t.title)}${t.recurring === false ? `<br><small class="muted">Today only</small>` : ""}${t.subtasks && t.subtasks.length ? `<br><small class="muted">${t.subtasks.length} steps</small>` : ""}</span>
+      <button class="icon-btn" data-edit="${t.id}">✏️</button>
+    </div>
+  `).join("") + `<button class="btn btn-secondary" id="addTaskBtn-${containerId}" style="margin-top:10px;">+ Add task</button>`;
+
+  el.querySelectorAll("[data-edit]").forEach(btn => {
+    btn.onclick = () => openTaskEditor(state.schedule.find(t => t.id === btn.dataset.edit));
+  });
+  const addBtn = document.getElementById(`addTaskBtn-${containerId}`);
+  if (addBtn) addBtn.onclick = () => openTaskEditor(null);
+}
+
+function openTaskEditor(task) {
+  editingTaskId = task ? task.id : null;
+  document.getElementById("taskEditHeading").textContent = task ? "Edit task" : "New task";
+  document.getElementById("teIcon").value = task?.icon || "";
+  document.getElementById("teTitle").value = task?.title || "";
+  document.getElementById("teTime").value = task?.time || "";
+  document.querySelectorAll("#teRepeat .seg-btn").forEach(b => {
+    const isOneOff = b.dataset.val === "oneoff";
+    b.classList.toggle("active", isOneOff === (task?.recurring === false));
+  });
+  renderSubtaskEditor(task?.subtasks ? task.subtasks.slice() : []);
+  document.getElementById("teDeleteBtn").classList.toggle("hidden", !task);
+  showSheet("taskEditSheet");
+}
+
+function renderSubtaskEditor(subtasks) {
+  const el = document.getElementById("teSubtasks");
+  el.innerHTML = subtasks.map((s, i) => `
+    <div class="te-subtask-row">
+      <input class="field-input te-subtask-input" value="${escapeHtml(s)}" data-idx="${i}">
+      <button class="icon-btn" data-remove="${i}">✕</button>
     </div>
   `).join("");
+  el.querySelectorAll("[data-remove]").forEach(btn => {
+    btn.onclick = () => {
+      const idx = Number(btn.dataset.remove);
+      const current = collectSubtasksFromEditor();
+      current.splice(idx, 1);
+      renderSubtaskEditor(current);
+    };
+  });
+}
+
+function collectSubtasksFromEditor() {
+  return Array.from(document.querySelectorAll("#teSubtasks .te-subtask-input")).map(i => i.value.trim()).filter(Boolean);
+}
+
+function saveTaskFromEditor() {
+  const icon = document.getElementById("teIcon").value.trim() || "📌";
+  const title = document.getElementById("teTitle").value.trim();
+  const time = document.getElementById("teTime").value;
+  const oneOff = document.querySelector("#teRepeat .seg-btn[data-val='oneoff']").classList.contains("active");
+  const subtasks = collectSubtasksFromEditor();
+  if (!title) { showToast("Give the task a title first"); return; }
+  const id = editingTaskId || ("task-" + Date.now());
+  const newTask = { id, time, title, icon, subtasks, recurring: !oneOff, dateKey: oneOff ? todayKey() : null };
+  const idx = state.schedule.findIndex(t => t.id === id);
+  const isNew = idx < 0;
+  if (!isNew) state.schedule[idx] = newTask; else state.schedule.push(newTask);
+  saveLocalCache();
+  pushSchedule(state.schedule);
+  closeSheet("taskEditSheet");
+  refreshAllScheduleViews();
+  showToast(isNew ? "✅ Task added" : "✅ Task updated");
+}
+
+function deleteTaskFromEditor() {
+  if (!editingTaskId) return;
+  state.schedule = state.schedule.filter(t => t.id !== editingTaskId);
+  saveLocalCache();
+  pushSchedule(state.schedule);
+  closeSheet("taskEditSheet");
+  refreshAllScheduleViews();
+  showToast("🗑️ Task deleted");
+}
+
+function refreshAllScheduleViews() {
+  if (currentView === "Schedule") renderScheduleBuilder("scheduleList");
+  if (currentView === "Today") renderToday();
+  if (currentCarerView === "Schedule") renderScheduleBuilder("carerScheduleList");
 }
 
 // ---------- Sleep view (manual entry, no HealthKit on web) ----------
@@ -759,6 +1144,7 @@ function saveScheduleFromEditor() {
     saveLocalCache();
     pushSchedule(tasks);
     errEl.classList.add("hidden");
+    refreshAllScheduleViews();
   } catch (e) {
     errEl.textContent = "That JSON isn't quite right: " + e.message;
     errEl.classList.remove("hidden");
@@ -771,10 +1157,19 @@ function renderCarerDashboard() {
   const tasksEl = document.getElementById("carerTasksCard");
   if (!statusEl || !tasksEl) return;
 
+  const quickRow = document.getElementById("suggestQuickRow");
+  if (quickRow && !quickRow.dataset.wired) {
+    quickRow.innerHTML = SUGGESTION_PRESETS.map(p => `<button class="suggest-quick-btn" data-preset="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join("");
+    quickRow.querySelectorAll("[data-preset]").forEach(btn => {
+      btn.onclick = () => sendSuggestion(btn.dataset.preset);
+    });
+    quickRow.dataset.wired = "1";
+  }
+
   if (!state.dayStarted) {
     statusEl.innerHTML = `
       <div class="card center-card waiting-card">
-        <div class="waiting-emoji">☀️</div>
+        <div class="waiting-emoji">${isNightNow() ? "🌙" : "☀️"}</div>
         <div class="carer-heart">Waiting for Babylon to wake up</div>
         <div class="muted">You'll see their day appear here as soon as it starts. ${state.streak ? `Currently on a ${state.streak} day streak 🔥` : ""}</div>
       </div>
@@ -840,6 +1235,17 @@ function sendEncouragement() {
   input.value = "";
 }
 
+function sendSuggestion(text) {
+  if (!text) return;
+  const entry = { id: "local-" + Date.now(), text, status: "pending", createdAt: new Date() };
+  state.suggestions.push(entry);
+  saveLocalCache();
+  pushSuggestion(text);
+  showToast("💡 Suggestion sent");
+  const input = document.getElementById("suggestInput");
+  if (input) input.value = "";
+}
+
 // ---------- Notifications ----------
 function requestNotificationPermission() {
   if ("Notification" in window) Notification.requestPermission();
@@ -879,10 +1285,25 @@ function checkTaskReminders() {
   if (state.profile !== "babylon" || !state.dayStarted || state.badDayMode) return;
   const now = new Date();
   activeTasks().forEach(task => {
-    const scheduled = scheduledDateFor(task);
-    if (!scheduled) return;
     const status = state.taskStatuses[task.id]?.state || "pending";
     if (status !== "pending") return;
+
+    const snoozeUntil = state.snoozes?.[task.id];
+    if (snoozeUntil) {
+      if (now.getTime() < snoozeUntil) return; // still snoozed, don't nag
+      const snoozeKey = task.id + "-snoozewake-" + snoozeUntil;
+      if (!notifiedToday.has(snoozeKey)) {
+        notifyLocal(`⏰ ${task.icon} ${task.title}`, "Your snooze is up — ready when you are.");
+        showToast(`⏰ Time for ${task.title}`);
+        notifiedToday.add(snoozeKey);
+        delete state.snoozes[task.id];
+        saveLocalCache();
+      }
+      return;
+    }
+
+    const scheduled = scheduledDateFor(task);
+    if (!scheduled) return;
     const diffMin = (now - scheduled) / 60000;
     const dueKey = task.id + "-due";
     const followKey = task.id + "-follow";
@@ -905,6 +1326,15 @@ function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
+}
+
+// ---------- Offline handling ----------
+function updateOfflineBanner() {
+  const online = navigator.onLine;
+  ["offlineBanner", "carerOfflineBanner"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle("hidden", online);
+  });
 }
 
 // ---------- Wire up static UI ----------
@@ -944,6 +1374,18 @@ function wireUI() {
   document.getElementById("confirmBadDayBtn").onclick = confirmBadDay;
   document.getElementById("cancelEndDayBtn").onclick = () => closeSheet("endDaySheet");
 
+  document.getElementById("taskEditBackdrop").onclick = () => closeSheet("taskEditSheet");
+  document.getElementById("teCancelBtn").onclick = () => closeSheet("taskEditSheet");
+  document.getElementById("teSaveBtn").onclick = saveTaskFromEditor;
+  document.getElementById("teDeleteBtn").onclick = deleteTaskFromEditor;
+  document.getElementById("teAddSubtask").onclick = () => renderSubtaskEditor([...collectSubtasksFromEditor(), ""]);
+  document.querySelectorAll("#teRepeat .seg-btn").forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll("#teRepeat .seg-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+    };
+  });
+
   document.getElementById("saveSleepBtn").onclick = saveSleepEntry;
   document.getElementById("saveScheduleBtn").onclick = saveScheduleFromEditor;
   document.getElementById("notifPermBtn").onclick = requestNotificationPermission;
@@ -953,6 +1395,7 @@ function wireUI() {
   document.getElementById("resetDayBtn").onclick = () => {
     if (!confirm("Reset today completely? This clears all of today's tasks on both phones.")) return;
     state.taskStatuses = {};
+    state.snoozes = {};
     state.dayStarted = false;
     state.badDayMode = false;
     state.streakCountedToday = false;
@@ -964,6 +1407,13 @@ function wireUI() {
     showToast("🔄 Today has been reset");
   };
   document.getElementById("sendEncourageBtn").onclick = sendEncouragement;
+  document.getElementById("sendSuggestBtn").onclick = () => {
+    const input = document.getElementById("suggestInput");
+    sendSuggestion(input.value.trim());
+  };
+
+  window.addEventListener("online", () => { updateOfflineBanner(); showToast("✅ Back online — syncing…"); });
+  window.addEventListener("offline", () => { updateOfflineBanner(); showToast("📡 You're offline — changes will sync later"); });
 }
 
 // ---------- Boot ----------
@@ -971,6 +1421,8 @@ function boot() {
   loadLocalCache();
   checkForNewDay();
   wireUI();
+  applyPhaseColors();
+  updateOfflineBanner();
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
@@ -979,6 +1431,7 @@ function boot() {
   const config = getSavedFirebaseConfig();
   if (!config) {
     showScreen("setupScreen");
+    hideLoadingScreen();
   } else {
     showScreen("loginScreen"); // onAuthStateChanged will move past this if already signed in
     initFirebase();
@@ -988,6 +1441,11 @@ function boot() {
     checkForNewDay();
     checkTaskReminders();
   }, 30000);
+
+  setInterval(applyPhaseColors, 60000);
+
+  // Safety net: never let the splash screen block the app indefinitely.
+  setTimeout(hideLoadingScreen, 4000);
 }
 
 document.addEventListener("DOMContentLoaded", boot);

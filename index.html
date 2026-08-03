@@ -14,6 +14,27 @@
 </head>
 <body>
 
+<!-- Subtle twinkling stars, only visible (opacity driven) during evening/night -->
+<div class="bg-stars" aria-hidden="true">
+  <span class="star" style="top:8%; left:12%; animation-delay:0s;">✨</span>
+  <span class="star" style="top:15%; left:78%; animation-delay:0.6s;">⭐</span>
+  <span class="star" style="top:22%; left:45%; animation-delay:1.2s;">✨</span>
+  <span class="star" style="top:32%; left:88%; animation-delay:1.8s;">⭐</span>
+  <span class="star" style="top:40%; left:20%; animation-delay:0.9s;">✨</span>
+  <span class="star" style="top:55%; left:65%; animation-delay:2.2s;">⭐</span>
+  <span class="star" style="top:68%; left:8%; animation-delay:1.5s;">✨</span>
+  <span class="star" style="top:78%; left:82%; animation-delay:0.3s;">⭐</span>
+  <span class="star" style="top:88%; left:35%; animation-delay:2.6s;">✨</span>
+</div>
+
+<div id="loadingScreen" class="loading-screen">
+  <div class="loading-inner">
+    <div class="loading-emoji">🧡</div>
+    <div class="loading-title">TismTracker</div>
+    <div class="loading-spinner"></div>
+  </div>
+</div>
+
 <div id="app">
 
   <div id="toastStack" class="toast-stack"></div>
@@ -64,9 +85,10 @@
   <div id="mainScreen" class="screen hidden">
     <header class="topbar">
       <div class="sync-dot" id="syncDot" title="Sync status"></div>
-      <div class="topbar-title" id="topbarTitle">Today</div>
+      <div class="topbar-title" id="topbarTitle">Home</div>
       <div class="topbar-spacer"></div>
     </header>
+    <div id="offlineBanner" class="offline-banner hidden">📡 You're offline — changes will sync once you're back online</div>
 
     <main id="viewToday" class="view">
       <!-- populated by app.js -->
@@ -74,7 +96,8 @@
 
     <main id="viewSchedule" class="view hidden">
       <h2 class="section-title">Schedule</h2>
-      <div id="scheduleList" class="list"></div>
+      <p class="muted small">Tap a task to edit it, or add a new one. "Today only" tasks (like a one-off appointment) disappear after today.</p>
+      <div id="scheduleList" class="list" style="margin-top:12px;"></div>
     </main>
 
     <main id="viewSleep" class="view hidden">
@@ -105,10 +128,13 @@
         </div>
       </div>
       <div class="card">
-        <label class="field-label">Schedule (JSON)</label>
-        <textarea id="scheduleJsonEditor" rows="14"></textarea>
-        <p id="scheduleJsonError" class="error-text hidden"></p>
-        <button class="btn btn-primary" id="saveScheduleBtn">Save schedule</button>
+        <details class="advanced">
+          <summary>Advanced: edit schedule as JSON</summary>
+          <label class="field-label">Schedule (JSON)</label>
+          <textarea id="scheduleJsonEditor" rows="14"></textarea>
+          <p id="scheduleJsonError" class="error-text hidden"></p>
+          <button class="btn btn-primary" id="saveScheduleBtn" style="margin-top:10px;">Save schedule</button>
+        </details>
       </div>
       <div class="card">
         <button class="btn" id="notifPermBtn">Enable notifications</button>
@@ -123,7 +149,7 @@
 
     <nav class="tabbar">
       <button class="tab-btn active" data-view="Today">
-        <span class="tab-icon">🏠</span><span>Today</span>
+        <span class="tab-icon">🏠</span><span>Home</span>
       </button>
       <button class="tab-btn" data-view="Schedule">
         <span class="tab-icon">📅</span><span>Schedule</span>
@@ -147,10 +173,18 @@
       <div class="topbar-title">Carer</div>
       <button class="link-btn" id="carerSwitchProfileBtn">Switch</button>
     </header>
+    <div id="carerOfflineBanner" class="offline-banner hidden">📡 You're offline — changes will sync once you're back online</div>
 
     <main id="viewCarerDashboard" class="view">
       <div id="carerStatusCard"></div>
       <div id="carerTasksCard"></div>
+
+      <div class="card">
+        <label class="field-label">Suggest a small tweak</label>
+        <div class="suggest-quick" id="suggestQuickRow"></div>
+        <textarea id="suggestInput" rows="2" placeholder="Suggest something small…"></textarea>
+        <button class="btn btn-pink" id="sendSuggestBtn">SUGGEST</button>
+      </div>
 
       <div class="card">
         <label class="field-label">Write encouragement</label>
@@ -162,9 +196,18 @@
       <div id="carerMoodHistory" class="list"></div>
     </main>
 
+    <main id="viewCarerSchedule" class="view hidden">
+      <h2 class="section-title">Schedule</h2>
+      <p class="muted small">You can view and adjust Babylon's schedule here too.</p>
+      <div id="carerScheduleList" class="list" style="margin-top:12px;"></div>
+    </main>
+
     <nav class="tabbar tabbar-pink">
       <button class="tab-btn active" data-cview="Dashboard">
         <span class="tab-icon">❤️</span><span>Dashboard</span>
+      </button>
+      <button class="tab-btn" data-cview="Schedule">
+        <span class="tab-icon">📅</span><span>Schedule</span>
       </button>
       <button class="tab-btn" data-cview="Settings">
         <span class="tab-icon">⚙️</span><span>Settings</span>
@@ -187,8 +230,34 @@
       <div class="sheet-title" id="sheetTitle">Shower</div>
       <div id="sheetSubtasks" class="subtask-list"></div>
       <button class="btn btn-primary hidden" id="sheetMarkDoneBtn">Mark done</button>
+      <button class="btn btn-secondary hidden" id="sheetSnoozeBtn">⏰ Remind me in 15 min</button>
       <button class="btn btn-danger hidden" id="sheetUndoBtn">↩️ Undo</button>
       <button class="link-btn" id="sheetCloseBtn">Close</button>
+    </div>
+  </div>
+
+  <!-- Task editor (visual schedule builder) -->
+  <div id="taskEditSheet" class="sheet hidden">
+    <div class="sheet-backdrop" id="taskEditBackdrop"></div>
+    <div class="sheet-content">
+      <div class="sheet-title" id="taskEditHeading">New task</div>
+      <label class="field-label">Icon (emoji)</label>
+      <input class="field-input" id="teIcon" maxlength="4" placeholder="🚿">
+      <label class="field-label">Title</label>
+      <input class="field-input" id="teTitle" placeholder="Shower">
+      <label class="field-label">Time</label>
+      <input class="field-input" type="time" id="teTime">
+      <label class="field-label">Repeats</label>
+      <div class="segmented" id="teRepeat">
+        <button type="button" class="seg-btn active" data-val="recurring">Every day</button>
+        <button type="button" class="seg-btn" data-val="oneoff">Just today</button>
+      </div>
+      <label class="field-label">Steps (optional)</label>
+      <div id="teSubtasks" class="te-subtask-list"></div>
+      <button class="link-btn" id="teAddSubtask">+ Add step</button>
+      <button class="btn btn-primary" id="teSaveBtn" style="margin-top:16px;">Save task</button>
+      <button class="btn btn-danger hidden" id="teDeleteBtn">Delete task</button>
+      <button class="link-btn" id="teCancelBtn">Cancel</button>
     </div>
   </div>
 
