@@ -43,9 +43,11 @@ const state = {
   badDayMode: false,
   taskStatuses: {},        // { [taskId]: { state, completedSubtasks: [], completedAt } }
   streak: 0,
+  streakCountedToday: false,
   moodEntries: [],
   encouragementMessages: [],
   sleepEntries: [],
+  unreadMessages: 0,
   cloudStatus: "unknown"   // unknown | checking | available | unavailable
 };
 
@@ -53,6 +55,9 @@ let db = null;
 let currentView = "Today";
 let currentCarerView = "Dashboard";
 let activeSheetTask = null;
+let firstDaySnapshot = true;
+let firstMsgSnapshot = true;
+let prevTaskStatuses = {};
 
 // ---------- Helpers ----------
 function todayKey(d = new Date()) {
@@ -79,9 +84,21 @@ function missedCount() {
 }
 
 function completionPct() {
+  // Weighted so the bar visibly moves as individual steps of a
+  // multi-step task are checked off, not just on full completion.
   const tasks = activeTasks();
   if (!tasks.length) return 0;
-  return completedCount() / tasks.length;
+  let sum = 0;
+  tasks.forEach(t => {
+    const s = state.taskStatuses[t.id];
+    const st = s?.state || "pending";
+    if (st === "completed" || st === "completedLate") {
+      sum += 1;
+    } else if (t.subtasks && t.subtasks.length) {
+      sum += (s?.completedSubtasks || []).length / t.subtasks.length;
+    }
+  });
+  return sum / tasks.length;
 }
 
 function scheduledDateFor(task) {
@@ -102,9 +119,11 @@ function saveLocalCache() {
     badDayMode: state.badDayMode,
     taskStatuses: state.taskStatuses,
     streak: state.streak,
+    streakCountedToday: state.streakCountedToday,
     moodEntries: state.moodEntries,
     encouragementMessages: state.encouragementMessages,
-    sleepEntries: state.sleepEntries
+    sleepEntries: state.sleepEntries,
+    unreadMessages: state.unreadMessages
   }));
 }
 
@@ -129,6 +148,9 @@ function checkForNewDay() {
     state.dayStarted = false;
     state.taskStatuses = {};
     state.badDayMode = false;
+    state.streakCountedToday = false;
+    notifiedToday.clear();
+    prevTaskStatuses = {};
     saveLocalCache();
     pushDayState();
   }
@@ -178,6 +200,7 @@ function proceedPastLogin() {
   } else if (state.profile === "babylon") {
     showScreen("mainScreen");
     renderToday();
+    updateCarerBadge();
     maybeShowMoodPrompt();
   } else {
     showScreen("carerScreen");
@@ -228,10 +251,27 @@ function attachListeners() {
   onSnapshot(doc(db, "days", state.dayKey), (snap) => {
     if (snap.exists()) {
       const d = snap.data();
+      const newStatuses = d.taskStatuses || {};
+
+      if (state.profile === "stink" && !firstDaySnapshot) {
+        const taskList = (d.badDayMode ? BAD_DAY_ESSENTIALS : (d.schedule || state.schedule));
+        taskList.forEach(t => {
+          const wasDone = ["completed", "completedLate"].includes(prevTaskStatuses[t.id]?.state);
+          const isDone = ["completed", "completedLate"].includes(newStatuses[t.id]?.state);
+          if (isDone && !wasDone) {
+            notifyLocal(`✅ ${t.title} done!`, "Babylon just completed a task.");
+            showToast(`${t.icon} ${t.title} completed!`);
+          }
+        });
+      }
+      firstDaySnapshot = false;
+      prevTaskStatuses = newStatuses;
+
       state.dayStarted = !!d.dayStarted;
       state.badDayMode = !!d.badDayMode;
-      state.taskStatuses = d.taskStatuses || {};
+      state.taskStatuses = newStatuses;
       state.streak = d.streak || 0;
+      state.streakCountedToday = !!d.streakCountedToday;
       saveLocalCache();
       if (currentView === "Today") renderToday();
       if (state.profile === "stink") renderCarerDashboard();
@@ -248,8 +288,22 @@ function attachListeners() {
   // Messages
   onSnapshot(query(collection(db, "messages"), orderBy("date", "asc")), (snap) => {
     state.encouragementMessages = snap.docs.map(d => ({ id: d.id, ...d.data(), date: d.data().date?.toDate?.() ?? new Date() }));
+
+    if (state.profile === "babylon" && !firstMsgSnapshot) {
+      snap.docChanges().forEach(change => {
+        if (change.type === "added") {
+          const m = change.doc.data();
+          notifyLocal("❤️ Message from Stink", m.text);
+          showToast(`❤️ ${m.text}`, "pink");
+          if (currentView !== "Carer") state.unreadMessages = (state.unreadMessages || 0) + 1;
+        }
+      });
+    }
+    firstMsgSnapshot = false;
+
     saveLocalCache();
-    if (currentView === "Carer") renderCarerMessages();
+    updateCarerBadge();
+    if (currentView === "Carer") { renderCarerMessages(); state.unreadMessages = 0; updateCarerBadge(); saveLocalCache(); }
   });
 
   // Sleep entries
@@ -271,7 +325,9 @@ async function pushDayState() {
     dayStarted: state.dayStarted,
     badDayMode: state.badDayMode,
     taskStatuses: state.taskStatuses,
-    streak: state.streak
+    streak: state.streak,
+    streakCountedToday: state.streakCountedToday,
+    schedule: state.badDayMode ? BAD_DAY_ESSENTIALS : state.schedule
   });
 }
 
@@ -308,6 +364,7 @@ function pickProfile(profile) {
   if (profile === "babylon") {
     showScreen("mainScreen");
     renderToday();
+    updateCarerBadge();
     maybeShowMoodPrompt();
   } else {
     showScreen("carerScreen");
@@ -325,7 +382,7 @@ function switchView(view) {
   if (view === "Today") renderToday();
   if (view === "Schedule") renderSchedule();
   if (view === "Sleep") renderSleep();
-  if (view === "Carer") renderCarerMessages();
+  if (view === "Carer") { renderCarerMessages(); state.unreadMessages = 0; updateCarerBadge(); saveLocalCache(); }
   if (view === "Settings") renderSettings();
 }
 
@@ -372,7 +429,7 @@ function renderToday() {
       <div class="badday-banner">
         <div class="title">Low energy mode activated ❤️</div>
         <div class="muted">Just the essentials today — that's enough.</div>
-        <button class="link-btn" id="exitBadDayBtn">Back to normal routine</button>
+        <button class="btn btn-secondary" id="exitBadDayBtn">🔄 Turn off low energy mode</button>
       </div>
     `;
   }
@@ -392,6 +449,14 @@ function renderToday() {
   tasks.forEach(t => {
     const rowEl = document.getElementById("task-" + t.id);
     if (rowEl) rowEl.onclick = () => openTaskSheet(t);
+    const undoEl = document.getElementById("undo-" + t.id);
+    if (undoEl) undoEl.onclick = (e) => {
+      e.stopPropagation();
+      undoTaskInternal(t);
+      saveLocalCache(); pushDayState();
+      renderToday();
+      showToast(`↩️ ${t.title} undone`);
+    };
   });
 }
 
@@ -403,13 +468,17 @@ function taskRowHtml(task) {
   const icon = status === "completed" || status === "completedLate" ? "✅"
     : status === "missed" ? "❗️"
     : status === "skipped" ? "↪️" : "›";
+  const canUndo = status !== "pending";
   return `
-    <button class="${classes.join(" ")}" id="task-${task.id}">
-      ${task.time ? `<span class="task-time">${task.time}</span>` : ""}
-      <span class="task-icon">${task.icon}</span>
-      <span class="task-title">${task.title}${status === "missed" ? `<span class="task-missed-label">Missed</span>` : ""}</span>
-      <span class="task-status-icon">${icon}</span>
-    </button>
+    <div class="${classes.join(" ")}" role="group">
+      <button class="task-row-main" id="task-${task.id}">
+        ${task.time ? `<span class="task-time">${task.time}</span>` : ""}
+        <span class="task-icon">${task.icon}</span>
+        <span class="task-title">${task.title}${status === "missed" ? `<span class="task-missed-label">Missed</span>` : ""}</span>
+        <span class="task-status-icon">${icon}</span>
+      </button>
+      ${canUndo ? `<button class="task-undo-btn" id="undo-${task.id}" title="Undo">↩️</button>` : ""}
+    </div>
   `;
 }
 
@@ -424,8 +493,14 @@ function startDay() {
   showCelebration();
 }
 
+const CELEBRATION_LINES = [
+  "Great job Babylon!", "You did it! ✨", "Nice one!", "Look at you go!",
+  "Proud of you!", "One step closer 💪", "Yes! Keep going!"
+];
 function showCelebration() {
   const el = document.getElementById("celebration");
+  const textEl = el.querySelector(".celebration-text");
+  if (textEl) textEl.textContent = CELEBRATION_LINES[Math.floor(Math.random() * CELEBRATION_LINES.length)];
   el.classList.remove("hidden");
   setTimeout(() => el.classList.add("hidden"), 1300);
 }
@@ -438,6 +513,16 @@ function openTaskSheet(task) {
   const status = state.taskStatuses[task.id] || { state: "pending", completedSubtasks: [] };
   const subtasksEl = document.getElementById("sheetSubtasks");
   const doneBtn = document.getElementById("sheetMarkDoneBtn");
+  const undoBtn = document.getElementById("sheetUndoBtn");
+
+  undoBtn.classList.toggle("hidden", status.state === "pending");
+  undoBtn.onclick = () => {
+    undoTaskInternal(task);
+    saveLocalCache(); pushDayState();
+    closeSheet("taskSheet");
+    renderToday();
+    showToast(`↩️ ${task.title} undone`);
+  };
 
   if (!task.subtasks || task.subtasks.length === 0) {
     subtasksEl.innerHTML = "";
@@ -499,10 +584,20 @@ function toggleSubtaskInternal(task, subtask) {
   recalcStreak();
 }
 
+function undoTaskInternal(task) {
+  state.taskStatuses[task.id] = { state: "pending", completedSubtasks: [] };
+  recalcStreak();
+}
+
 function recalcStreak() {
   const tasks = activeTasks();
-  if (tasks.length && completedCount() === tasks.length) {
+  const allDone = tasks.length > 0 && completedCount() === tasks.length;
+  if (allDone && !state.streakCountedToday) {
     state.streak += 1;
+    state.streakCountedToday = true;
+  } else if (!allDone && state.streakCountedToday) {
+    state.streak = Math.max(0, state.streak - 1);
+    state.streakCountedToday = false;
   }
 }
 
@@ -520,7 +615,7 @@ function openEndDay() {
     listEl.innerHTML = `<p class="muted">Everything's done today ✨</p>`;
   } else {
     listEl.innerHTML = tasks.map(t => `
-      <div class="task-row" style="cursor:default;">
+      <div class="task-row-static">
         <span class="task-icon">${t.icon}</span>
         <span class="task-title">${t.title}</span>
         <select class="field-input" style="width:auto;" data-task="${t.id}">
@@ -551,6 +646,7 @@ function openEndDay() {
 // ---------- Bad day ----------
 function confirmBadDay() {
   state.badDayMode = true;
+  state.dayStarted = true;
   saveLocalCache(); pushDayState();
   closeSheet("badDaySheet");
   renderToday();
@@ -590,7 +686,7 @@ function maybeShowMoodPrompt() {
 function renderSchedule() {
   const el = document.getElementById("scheduleList");
   el.innerHTML = state.schedule.map(t => `
-    <div class="task-row" style="cursor:default;">
+    <div class="task-row-static">
       <span class="task-time">${t.time}</span>
       <span class="task-icon">${t.icon}</span>
       <span class="task-title">${t.title}${t.subtasks.length ? `<br><small class="muted">${t.subtasks.length} steps</small>` : ""}</span>
@@ -606,7 +702,7 @@ function renderSleep() {
     return;
   }
   historyEl.innerHTML = state.sleepEntries.slice(0, 14).map(e => `
-    <div class="task-row" style="cursor:default;">
+    <div class="task-row-static">
       <span class="task-icon">😴</span>
       <span class="task-title">${Math.floor(e.durationMinutes / 60)}h ${e.durationMinutes % 60}m
         <br><small class="muted">Bed ${e.bedtime} · Wake ${e.wake}</small></span>
@@ -671,15 +767,47 @@ function saveScheduleFromEditor() {
 
 // ---------- Carer (Stink) dashboard ----------
 function renderCarerDashboard() {
-  const pct = Math.round(completionPct() * 100);
-  document.getElementById("carerProgressFill").style.width = pct + "%";
-  document.getElementById("carerCompleted").textContent = completedCount();
-  document.getElementById("carerMissed").textContent = missedCount();
-  document.getElementById("carerBadDayNote").classList.toggle("hidden", !state.badDayMode);
+  const statusEl = document.getElementById("carerStatusCard");
+  const tasksEl = document.getElementById("carerTasksCard");
+  if (!statusEl || !tasksEl) return;
 
+  if (!state.dayStarted) {
+    statusEl.innerHTML = `
+      <div class="card center-card waiting-card">
+        <div class="waiting-emoji">☀️</div>
+        <div class="carer-heart">Waiting for Babylon to wake up</div>
+        <div class="muted">You'll see their day appear here as soon as it starts. ${state.streak ? `Currently on a ${state.streak} day streak 🔥` : ""}</div>
+      </div>
+    `;
+    tasksEl.innerHTML = "";
+    return;
+  }
+
+  const pct = Math.round(completionPct() * 100);
   const todayMood = state.moodEntries.filter(m => todayKey(new Date(m.date)) === todayKey()).slice(-1)[0];
   const moodDef = todayMood ? MOODS.find(m => m.id === todayMood.mood) : null;
-  document.getElementById("carerMoodToday").textContent = moodDef ? `${moodDef.emoji} ${moodDef.label}` : "Not logged yet";
+
+  statusEl.innerHTML = `
+    <div class="card center-card">
+      <div class="carer-heart">❤️ Babylon</div>
+      <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div class="stat-row">
+        <div class="stat-pill"><span>${completedCount()}</span><small>Completed</small></div>
+        <div class="stat-pill"><span>${missedCount()}</span><small>Missed</small></div>
+      </div>
+      <div class="badday-note ${state.badDayMode ? "" : "hidden"}">Low energy mode is active today</div>
+      <div class="mood-row">Mood: <span>${moodDef ? `${moodDef.emoji} ${moodDef.label}` : "Not logged yet"}</span></div>
+    </div>
+  `;
+
+  const tasks = activeTasks();
+  tasksEl.innerHTML = `
+    <h2 class="section-title">Today's tasks</h2>
+    <div class="list">${tasks.map(taskRowHtml).join("")}</div>
+  `;
+  // Read-only for Stink — strip the click affordance/undo control.
+  tasksEl.querySelectorAll(".task-row-main").forEach(b => { b.style.cursor = "default"; b.disabled = true; });
+  tasksEl.querySelectorAll(".task-undo-btn").forEach(b => b.remove());
 }
 
 function renderCarerHistory() {
@@ -692,7 +820,7 @@ function renderCarerHistory() {
     const def = MOODS.find(x => x.id === m.mood);
     const d = new Date(m.date);
     return `
-      <div class="task-row" style="cursor:default;">
+      <div class="task-row-static">
         <span class="task-icon">${def ? def.emoji : "•"}</span>
         <span class="task-title">${def ? def.label : m.mood}<br><small class="muted">${m.timeOfDay} · ${d.toLocaleDateString()}</small></span>
       </div>
@@ -721,6 +849,29 @@ function notifyLocal(title, body) {
   if ("Notification" in window && Notification.permission === "granted") {
     try { new Notification(title, { body, icon: "icons/icon-192.png" }); } catch (e) { /* ignore */ }
   }
+}
+
+// In-app toast — fires even when OS notification permission hasn't
+// been granted, so messages/completions are never silently missed
+// while the app is open.
+function showToast(text, tone) {
+  const stack = document.getElementById("toastStack");
+  if (!stack) return;
+  const el = document.createElement("div");
+  el.className = "toast" + (tone === "pink" ? " toast-pink" : "");
+  el.textContent = text;
+  stack.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 300);
+  }, 3600);
+}
+
+function updateCarerBadge() {
+  const badge = document.getElementById("carerTabBadge");
+  if (!badge) return;
+  badge.classList.toggle("hidden", !state.unreadMessages);
 }
 
 const notifiedToday = new Set();
@@ -800,8 +951,17 @@ function wireUI() {
   document.getElementById("switchProfileBtn").onclick = () => { state.profile = null; saveLocalCache(); showScreen("profileScreen"); };
   document.getElementById("carerSwitchProfileBtn").onclick = () => { state.profile = null; saveLocalCache(); showScreen("profileScreen"); };
   document.getElementById("resetDayBtn").onclick = () => {
-    state.taskStatuses = {}; state.dayStarted = false; state.badDayMode = false;
-    saveLocalCache(); pushDayState(); renderToday();
+    if (!confirm("Reset today completely? This clears all of today's tasks on both phones.")) return;
+    state.taskStatuses = {};
+    state.dayStarted = false;
+    state.badDayMode = false;
+    state.streakCountedToday = false;
+    notifiedToday.clear();
+    prevTaskStatuses = {};
+    saveLocalCache();
+    pushDayState();
+    renderToday();
+    showToast("🔄 Today has been reset");
   };
   document.getElementById("sendEncourageBtn").onclick = sendEncouragement;
 }

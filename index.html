@@ -16,6 +16,8 @@
 
 <div id="app">
 
+  <div id="toastStack" class="toast-stack"></div>
+
   <!-- Firebase setup gate -->
   <div id="setupScreen" class="screen hidden">
     <div class="setup-card">
@@ -130,7 +132,7 @@
         <span class="tab-icon">😴</span><span>Sleep</span>
       </button>
       <button class="tab-btn" data-view="Carer">
-        <span class="tab-icon">❤️</span><span>Carer</span>
+        <span class="tab-icon-wrap"><span class="tab-icon">❤️</span><span class="tab-badge hidden" id="carerTabBadge"></span></span><span>Carer</span>
       </button>
       <button class="tab-btn" data-view="Settings">
         <span class="tab-icon">⚙️</span><span>Settings</span>
@@ -147,16 +149,8 @@
     </header>
 
     <main id="viewCarerDashboard" class="view">
-      <div class="card center-card">
-        <div class="carer-heart">❤️ Babylon</div>
-        <div class="progress-track"><div class="progress-fill" id="carerProgressFill"></div></div>
-        <div class="stat-row">
-          <div class="stat-pill"><span id="carerCompleted">0</span><small>Completed</small></div>
-          <div class="stat-pill"><span id="carerMissed">0</span><small>Missed</small></div>
-        </div>
-        <div id="carerBadDayNote" class="badday-note hidden">Low energy mode is active today</div>
-        <div class="mood-row">Mood: <span id="carerMoodToday">Not logged yet</span></div>
-      </div>
+      <div id="carerStatusCard"></div>
+      <div id="carerTasksCard"></div>
 
       <div class="card">
         <label class="field-label">Write encouragement</label>
@@ -193,6 +187,7 @@
       <div class="sheet-title" id="sheetTitle">Shower</div>
       <div id="sheetSubtasks" class="subtask-list"></div>
       <button class="btn btn-primary hidden" id="sheetMarkDoneBtn">Mark done</button>
+      <button class="btn btn-danger hidden" id="sheetUndoBtn">↩️ Undo</button>
       <button class="link-btn" id="sheetCloseBtn">Close</button>
     </div>
   </div>

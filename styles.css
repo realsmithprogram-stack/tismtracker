@@ -34,7 +34,21 @@ html, body {
 
 .hidden { display: none !important; }
 
-.screen { min-height: 100vh; min-height: 100dvh; }
+.screen { min-height: 100vh; min-height: 100dvh; animation: screenIn 0.35s ease; }
+@keyframes screenIn { from { opacity: 0; } to { opacity: 1; } }
+
+.view .card,
+.view .list > * {
+  animation: cardIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.view .list > *:nth-child(1) { animation-delay: 0.02s; }
+.view .list > *:nth-child(2) { animation-delay: 0.05s; }
+.view .list > *:nth-child(3) { animation-delay: 0.08s; }
+.view .list > *:nth-child(4) { animation-delay: 0.11s; }
+.view .list > *:nth-child(5) { animation-delay: 0.14s; }
+.view .list > *:nth-child(6) { animation-delay: 0.17s; }
+.view .list > *:nth-child(n+7) { animation-delay: 0.2s; }
 
 .muted { color: var(--plum-soft); font-size: 0.92rem; line-height: 1.4; }
 .small { font-size: 0.8rem; }
@@ -174,11 +188,14 @@ html, body {
   cursor: pointer;
   color: var(--plum);
   background: white;
+  box-shadow: 0 4px 14px rgba(74,59,82,0.10);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
 }
-.btn:active { transform: scale(0.98); }
-.btn-primary { background: var(--coral); color: white; }
-.btn-indigo { background: var(--indigo); color: white; }
-.btn-pink { background: var(--pink); color: white; margin-top: 10px; }
+.btn:active { transform: scale(0.97); box-shadow: 0 2px 6px rgba(74,59,82,0.10); }
+.btn-primary { background: linear-gradient(135deg, var(--coral), var(--coral-dark)); color: white; }
+.btn-indigo { background: linear-gradient(135deg, var(--indigo), var(--indigo-deep)); color: white; }
+.btn-pink { background: linear-gradient(135deg, var(--pink), #E0628C); color: white; margin-top: 10px; }
+.btn-secondary { background: white; color: var(--coral-dark); border: 1.5px solid var(--coral); margin-top: 10px; }
 .btn-danger { background: transparent; color: var(--red); border: 1.5px solid var(--red); }
 .link-btn {
   display: block;
@@ -213,25 +230,65 @@ html, body {
 .list { display: flex; flex-direction: column; gap: 10px; }
 .task-row {
   display: flex;
+  align-items: stretch;
+  gap: 6px;
+  border-radius: var(--radius-md);
+  background: white;
+  box-shadow: 0 2px 8px rgba(74,59,82,0.06);
+  transition: background 0.25s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+.task-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: transform 0.12s ease;
+}
+.task-row-main:active { transform: scale(0.985); }
+.task-undo-btn {
+  flex-shrink: 0;
+  width: 44px;
+  border: none;
+  background: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  color: var(--plum-soft);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.task-undo-btn:hover { background: rgba(74,59,82,0.05); }
+.task-undo-btn:active { transform: scale(0.85) rotate(-25deg); }
+.task-row.missed { background: #FDEDEA; }
+.task-row.completed { animation: taskComplete 0.4s ease; }
+.task-row.completed .task-title { text-decoration: line-through; color: var(--plum-soft); }
+@keyframes taskComplete {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.03); background: #EFFBF1; }
+  100% { transform: scale(1); }
+}
+.task-time { font-size: 0.72rem; color: var(--plum-soft); width: 40px; flex-shrink: 0; }
+.task-icon { font-size: 1.4rem; }
+.task-title { font-weight: 600; flex: 1; }
+.task-missed-label { font-size: 0.72rem; color: var(--red); display: block; }
+.task-status-icon { font-size: 1.1rem; }
+
+.task-row-static {
+  display: flex;
   align-items: center;
   gap: 12px;
   padding: 14px 16px;
   border-radius: var(--radius-md);
   background: white;
   box-shadow: 0 2px 8px rgba(74,59,82,0.06);
-  border: none;
   width: 100%;
-  text-align: left;
-  font-family: inherit;
-  cursor: pointer;
 }
-.task-row.missed { background: #FDEDEA; }
-.task-row.completed .task-title { text-decoration: line-through; color: var(--plum-soft); }
-.task-time { font-size: 0.72rem; color: var(--plum-soft); width: 40px; flex-shrink: 0; }
-.task-icon { font-size: 1.4rem; }
-.task-title { font-weight: 600; flex: 1; }
-.task-missed-label { font-size: 0.72rem; color: var(--red); display: block; }
-.task-status-icon { font-size: 1.1rem; }
 
 .badday-banner {
   background: #FDEDEA;
@@ -309,6 +366,62 @@ html, body {
 }
 .mood-opt .emoji { font-size: 1.8rem; display: block; }
 .mood-opt .label { font-size: 0.65rem; color: var(--plum-soft); }
+
+/* --- Toasts --- */
+.toast-stack {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: 0; right: 0;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  padding: 0 16px;
+}
+.toast {
+  max-width: 420px;
+  width: 100%;
+  background: var(--indigo-deep);
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 12px 18px;
+  border-radius: 999px;
+  box-shadow: 0 8px 20px rgba(74,59,82,0.25);
+  text-align: center;
+  opacity: 0;
+  transform: translateY(-16px) scale(0.96);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.toast.show { opacity: 1; transform: translateY(0) scale(1); }
+.toast-pink { background: linear-gradient(135deg, var(--pink), #E0628C); }
+
+/* --- Tab badge --- */
+.tab-icon-wrap { position: relative; display: inline-block; }
+.tab-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: badgePulse 1.4s infinite;
+}
+@keyframes badgePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(232, 117, 106, 0.5); }
+  50% { box-shadow: 0 0 0 5px rgba(232, 117, 106, 0); }
+}
+
+/* --- Waiting card (carer, day not started) --- */
+.waiting-card { padding: 36px 20px; }
+.waiting-emoji { font-size: 3rem; animation: floatY 3s ease-in-out infinite; }
+@keyframes floatY {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
 
 /* --- Celebration --- */
 .celebration {
